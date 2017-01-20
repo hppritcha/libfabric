@@ -332,11 +332,19 @@ static int __recv_completion(
 		uint64_t tag,
 		fi_addr_t src_addr)
 {
-	int rc;
+	ssize_t rc;
 
 	if ((req->msg.recv_flags & FI_COMPLETION) && ep->recv_cq) {
-		rc = _gnix_cq_add_event(ep->recv_cq, ep, context, flags, len,
-					addr, data, tag, src_addr);
+		if (unlikely(ep->caps & FI_SOURCE &&
+				     src_addr == FI_ADDR_NOTAVAIL)) {
+			rc = _gnix_cq_add_error(ep->recv_cq, context, flags,
+						len, addr, data, tag, 0,
+						FI_EADDRNOTAVAIL, 0,
+						ep->recv_cq->error_data);
+		} else {
+			rc = _gnix_cq_add_event(ep->recv_cq, ep, context, flags,
+						len, addr, data, tag, src_addr);
+		}
 		if (rc != FI_SUCCESS)  {
 			GNIX_WARN(FI_LOG_EP_DATA,
 					"_gnix_cq_add_event returned %d\n",
@@ -376,7 +384,9 @@ static inline int __gnix_msg_recv_completion(struct gnix_fid_ep *ep,
 				 (void *)req->msg.recv_info[0].recv_addr :
 				 NULL,
 				 req->msg.imm, req->msg.tag,
-				 _gnix_vc_peer_fi_addr(req->vc));
+				 (req->vc->ep->caps & FI_SOURCE) ?
+				 _gnix_vc_peer_fi_addr(req->vc) :
+				 FI_ADDR_NOTAVAIL);
 }
 
 static int __gnix_msg_send_err(struct gnix_fid_ep *ep, struct gnix_fab_req *req)

@@ -331,7 +331,9 @@ static void __gnix_vc_pack_conn_req(char *sbuf,
 				    gni_smsg_attr_t *src_smsg_attr,
 				    gni_mem_handle_t *src_irq_cq_mhdl,
 				    uint64_t caps,
-				    xpmem_segid_t my_segid)
+				    xpmem_segid_t my_segid,
+				    uint8_t name_type,
+				    uint8_t rx_ctx_cnt)
 {
 	size_t __attribute__((unused)) len;
 	char *cptr = sbuf;
@@ -349,7 +351,10 @@ static void __gnix_vc_pack_conn_req(char *sbuf,
 	      sizeof(uint64_t) * 2 +
 	      sizeof(gni_smsg_attr_t) +
 	      sizeof(gni_mem_handle_t) +
-	      sizeof(xpmem_segid_t);
+	      sizeof(xpmem_segid_t) +
+	      sizeof(name_type) +
+	      sizeof(rx_ctx_cnt);
+
 	assert(len <= GNIX_CM_NIC_MAX_MSG_SIZE);
 
 	memcpy(cptr, &rtype, sizeof(rtype));
@@ -369,6 +374,10 @@ static void __gnix_vc_pack_conn_req(char *sbuf,
 	memcpy(cptr, &caps, sizeof(uint64_t));
 	cptr += sizeof(xpmem_segid_t);
 	memcpy(cptr, &my_segid, sizeof(xpmem_segid_t));
+	cptr += sizeof(name_type);
+	memcpy(cptr, &name_type, sizeof(name_type));
+	cptr += sizeof(rx_ctx_cnt);
+	memcpy(cptr, &rx_ctx_cnt, sizeof(rx_ctx_cnt));
 }
 
 /*
@@ -382,7 +391,9 @@ static void __gnix_vc_unpack_conn_req(char *rbuf,
 				      gni_smsg_attr_t *src_smsg_attr,
 				      gni_mem_handle_t *src_irq_cq_mhndl,
 				      uint64_t *caps,
-				      xpmem_segid_t *peer_segid)
+				      xpmem_segid_t *peer_segid,
+				      uint8_t *name_type,
+				      uint8_t *rx_ctx_cnt)
 {
 	size_t __attribute__((unused)) len;
 	char *cptr = rbuf;
@@ -409,6 +420,11 @@ static void __gnix_vc_unpack_conn_req(char *rbuf,
 	memcpy(caps, cptr, sizeof(uint64_t));
 	cptr += sizeof(uint64_t);
 	memcpy(peer_segid, cptr, sizeof(xpmem_segid_t));
+	cptr += sizeof(uint8_t);
+	memcpy(name_type, cptr, sizeof(*name_type));
+	cptr += sizeof(uint8_t);
+	memcpy(rx_ctx_cnt, cptr, sizeof(*rx_ctx_cnt));
+
 }
 
 /*
@@ -832,8 +848,10 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 	fi_addr_t fi_addr;
 	xpmem_segid_t peer_segid;
 	xpmem_apid_t peer_apid;
+	uint8_t name_type, rx_ctx_cnt;
 	bool accessible;
 	ssize_t __attribute__((unused)) len;
+	struct gnix_ep_name *error_data;
 
 	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
@@ -849,7 +867,9 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 				  &src_smsg_attr,
 				  &tmp_mem_hndl,
 				  &peer_caps,
-				  &peer_segid);
+				  &peer_segid,
+				  &name_type,
+				  &rx_ctx_cnt);
 
 
 	GNIX_DEBUG(FI_LOG_EP_CTRL,
@@ -874,6 +894,22 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 			  "_gnix_ht_lookup addr_to_ep failed\n");
 		ret = -FI_ENOENT;
 		goto err;
+	}
+
+	/* Report unknown source address to applications via recv CQ error
+	 * data for unconnected endpoints
+	 */
+	if (GNIX_EP_RDM_DGM(ep->type) && ep->recv_cq != NULL) {
+		error_data = ep->recv_cq->error_data;
+		memset(error_data, 0, sizeof(*error_data));
+
+		error_data->gnix_addr = src_addr;
+		error_data->name_type = name_type;
+
+		error_data->cm_nic_cdm_id = cm_nic->my_name.cm_nic_cdm_id;
+		error_data->cookie = cm_nic->my_name.cookie;
+
+		error_data->rx_ctx_cnt = rx_ctx_cnt;
 	}
 
 	/*
@@ -937,14 +973,14 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 
 				dlist_insert_tail(&vc->list, &ep->unmapped_vcs);
 			}
-		} else
+		} else {
 			vc->conn_state = GNIX_VC_CONNECTING;
+		}
 
 		/*
 		 * prepare a work request to
 		 * initiate an request response
 		 */
-
 		work_req = calloc(1, sizeof(*work_req));
 		if (work_req == NULL) {
 			ret = -FI_ENOMEM;
@@ -994,7 +1030,6 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 				fi_strerror(-ret));
 
 	} else {
-
 		/*
 		 * we can only be in connecting state if we
 		 * reach here.  We have all the informatinon,
@@ -1354,7 +1389,9 @@ static int __gnix_vc_conn_req_prog_fn(void *data, int *complete_ptr)
 				&smsg_mbox_attr,
 				&ep->nic->irq_mem_hndl,
 				ep->caps,
-				my_segid);
+				my_segid,
+				ep->src_addr.name_type,
+				ep->src_addr.rx_ctx_cnt);
 
 	/*
 	 * try to send the message, if -FI_EAGAIN is returned, okay,
@@ -2328,12 +2365,11 @@ fi_addr_t _gnix_vc_peer_fi_addr(struct gnix_vc *vc)
 
 	/* If FI_SOURCE capability was requested, do a reverse lookup of a VC's
 	 * FI address once.  Skip translation on connected EPs (no AV). */
-	if (vc->ep->caps & FI_SOURCE &&
-	    vc->ep->av &&
-	    vc->peer_fi_addr == FI_ADDR_NOTAVAIL) {
+	if (vc->ep->av && vc->peer_fi_addr == FI_ADDR_NOTAVAIL) {
 		rc = _gnix_av_reverse_lookup(vc->ep->av,
 					     vc->peer_addr,
 					     &vc->peer_fi_addr);
+
 		if (rc != FI_SUCCESS)
 			GNIX_WARN(FI_LOG_EP_DATA,
 				  "_gnix_av_reverse_lookup() failed: %d\n",

@@ -1018,8 +1018,8 @@ __gnix_fabric_ops_native_amo(struct fid_ep *ep, const void *buf, size_t count,
 
 	if (!ep)
 		return -FI_EINVAL;
-	if ((req_type < 0) || (req_type > GNIX_FAB_RQ_MAX_TYPES) || 
-		(req_type >= GNIX_FAB_RQ_END_NON_NATIVE && 
+	if ((req_type < 0) || (req_type > GNIX_FAB_RQ_MAX_TYPES) ||
+		(req_type >= GNIX_FAB_RQ_END_NON_NATIVE &&
 		 req_type < GNIX_FAB_RQ_START_NATIVE))
 		return -FI_EINVAL;
 

@@ -68,6 +68,7 @@ struct gnix_fid_cq {
 	struct gnix_queue *events;
 	struct gnix_queue *errors;
 
+	struct gnix_ep_name *error_data;
 	struct fi_cq_attr attr;
 	size_t entry_size;
 

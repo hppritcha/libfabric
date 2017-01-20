@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2015 Los Alamos National Security, LLC. All rights reserved.
+ * Copyright (c) 2015-2017 Los Alamos National Security, LLC.
+ *                         All rights reserved.
  * Copyright (c) 2015-2016 Cray Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
@@ -78,6 +79,7 @@ const char *cdm_id[NUMEPS] = { "5000", "5001" };
 struct fi_info *hints;
 static int using_bnd_ep = 0;
 static int dgram_should_fail;
+static int peer_src_known = 1;
 
 #define BUF_SZ (1<<20)
 #define BUF_RNDZV (1<<14)
@@ -107,6 +109,7 @@ void rdm_sr_setup_common_eps(void)
 	int ret = 0, i = 0, j = 0;
 	struct fi_av_attr attr;
 	size_t addrlen = 0;
+	bool is_fi_source = !!(hints->caps & FI_SOURCE);
 
 	memset(&attr, 0, sizeof(attr));
 	attr.type = FI_AV_MAP;
@@ -185,11 +188,23 @@ void rdm_sr_setup_common_eps(void)
 	}
 
 	for (i = 0; i < NUMEPS; i++) {
-		/* Insert all gni addresses into each av */
-		for (j = 0; j < NUMEPS; j++) {
-			ret = fi_av_insert(av[i], ep_name[j], 1, &gni_addr[j],
-					   0, NULL);
-			cr_assert(ret == 1);
+		/* To test API-1.1: Reporting of unknown source addresses --
+		 * only insert addresses into the sender's av */
+		if (is_fi_source && !peer_src_known && i < (NUMEPS / 2)) {
+			for (j = 0; j < NUMEPS; j++) {
+				dbg_printf("Only does src EP insertions\n");
+				ret = fi_av_insert(av[i], ep_name[j], 1,
+						   &gni_addr[j],
+						   0, NULL);
+				cr_assert(ret == 1);
+			}
+		} else if (peer_src_known) {
+			for (j = 0; j < NUMEPS; j++) {
+				ret = fi_av_insert(av[i], ep_name[j], 1,
+						   &gni_addr[j],
+						   0, NULL);
+				cr_assert(ret == 1);
+			}
 		}
 
 		ret = fi_ep_bind(ep[i], &av[i]->fid, 0);
@@ -243,6 +258,7 @@ void rdm_sr_setup_common(void)
 	}
 }
 
+/* Note: default ep type is FI_EP_RDM (used in rdm_sr_setup) */
 void rdm_sr_setup(bool is_noreg, enum fi_progress pm)
 {
 	int ret = 0, i = 0;
@@ -304,6 +320,12 @@ static void rdm_sr_setup_reg(void) {
 
 static void dgram_sr_setup_reg(void)
 {
+	dgram_sr_setup(false, FI_PROGRESS_AUTO);
+}
+
+static void dgram_sr_setup_reg_src_unk()
+{
+	peer_src_known = 0;
 	dgram_sr_setup(false, FI_PROGRESS_AUTO);
 }
 
@@ -474,6 +496,44 @@ void rdm_sr_xfer_for_each_size(void (*xfer)(int len), int slen, int elen)
 	}
 }
 
+static inline void rdm_sr_check_err_cqe(struct fi_cq_err_entry *cqe, void *ctx,
+					uint64_t flags, void *addr, size_t len,
+					uint64_t data, bool buf_is_non_null)
+{
+	cr_assert(cqe->op_context == ctx, "error CQE Context mismatch");
+	cr_assert(cqe->flags == flags, "error CQE flags mismatch");
+
+	if (flags & FI_RECV) {
+		if (cqe->len != len) {
+			cr_assert(cqe->olen == (len - cqe->len), "error CQE "
+				"olen mismatch");
+		} else {
+			cr_assert(cqe->olen == 0, "error CQE olen mismatch");
+		}
+
+		if (buf_is_non_null)
+			cr_assert(cqe->buf == addr, "error CQE address "
+				"mismatch");
+		else
+			cr_assert(cqe->buf == NULL, "error CQE address "
+				"mismatch");
+
+
+		if (flags & FI_REMOTE_CQ_DATA)
+			cr_assert(cqe->data == data, "error CQE data mismatch");
+	} else {
+		cr_assert(cqe->len == 0, "Invalid error CQE length");
+		cr_assert(cqe->buf == 0, "Invalid error CQE address");
+		cr_assert(cqe->data == 0, "Invalid error CQE data");
+	}
+
+	cr_assert(cqe->tag == 0, "Invalid error CQE tag");
+	cr_assert(cqe->err > 0, "Invalid error CQE err code");
+
+	/* Note: cqe->prov_errno and cqe->err_data are not necessarily set --
+	 * see the fi_cq_readerr man page */
+}
+
 static inline void rdm_sr_check_cqe(struct fi_cq_tagged_entry *cqe, void *ctx,
 				    uint64_t flags, void *addr, size_t len,
 				    uint64_t data, bool buf_is_non_null)
@@ -546,12 +606,19 @@ void rdm_sr_lazy_dereg_disable(void)
 	}
 }
 
-static inline int rdm_sr_check_canceled(struct fid_cq *cq)
+static inline struct fi_cq_err_entry rdm_sr_check_canceled(struct fid_cq *cq)
 {
 	struct fi_cq_err_entry ee;
 
 	fi_cq_readerr(cq, &ee, 0);
-	return (ee.err == FI_ECANCELED);
+
+	/* To test API-1.1: Reporting of unknown source addresses */
+	if ((hints->caps & FI_SOURCE) && ee.err == FI_EADDRNOTAVAIL) {
+		int ret = fi_av_insert(av[1], ep_name[0], 1, ee.err_data, 0,
+				       NULL);
+		cr_assert(ret == 1);
+	}
+	return ee;
 }
 
 /*******************************************************************************
@@ -563,6 +630,9 @@ TestSuite(rdm_sr, .init = rdm_sr_setup_reg, .fini = rdm_sr_teardown,
 
 TestSuite(dgram_sr, .init = dgram_sr_setup_reg, .fini = rdm_sr_teardown,
 	  .disabled = false);
+
+TestSuite(dgram_sr_src_unk, .init = dgram_sr_setup_reg_src_unk, .fini =
+	  rdm_sr_teardown, .disabled = false);
 
 TestSuite(rdm_sr_noreg, .init = rdm_sr_setup_noreg,
 	  .fini = rdm_sr_teardown_nounreg, .disabled = false);
@@ -587,14 +657,20 @@ void do_send(int len)
 {
 	int ret;
 	int source_done = 0, dest_done = 0;
-	int scanceled = 0, dcanceled = 0;
+	int scanceled = 0, dcanceled = 0, daddrnotavail = 0;
 	struct fi_cq_tagged_entry s_cqe = { (void *) -1, UINT_MAX, UINT_MAX,
 					    (void *) -1, UINT_MAX, UINT_MAX };
 	struct fi_cq_tagged_entry d_cqe = { (void *) -1, UINT_MAX, UINT_MAX,
 					    (void *) -1, UINT_MAX, UINT_MAX };
+	struct fi_cq_err_entry d_err_cqe;
+	struct fi_cq_err_entry s_err_cqe;
+
 	ssize_t sz;
 	uint64_t s[NUMEPS] = {0}, r[NUMEPS] = {0}, s_e[NUMEPS] = {0};
 	uint64_t r_e[NUMEPS] = {0};
+
+	memset(&d_err_cqe, -1, sizeof(struct fi_cq_err_entry));
+	memset(&s_err_cqe, -1, sizeof(struct fi_cq_err_entry));
 
 	rdm_sr_init_data(source, len, 0xab);
 	rdm_sr_init_data(target, len, 0);
@@ -608,29 +684,48 @@ void do_send(int len)
 	/* need to progress both CQs simultaneously for rendezvous */
 	do {
 		ret = fi_cq_read(msg_cq[0], &s_cqe, 1);
+
 		if (ret == 1) {
 			source_done = 1;
 		}
 		if (ret == -FI_EAVAIL) {
-			if (rdm_sr_check_canceled(msg_cq[0]))
+			s_err_cqe = rdm_sr_check_canceled(msg_cq[0]);
+
+			if (s_err_cqe.err == FI_ECANCELED)
 				scanceled = 1;
 		}
+
 		ret = fi_cq_read(msg_cq[1], &d_cqe, 1);
+
 		if (ret == 1) {
 			dest_done = 1;
 		}
 		if (ret == -FI_EAVAIL) {
-			if (rdm_sr_check_canceled(msg_cq[1]))
+			d_err_cqe = rdm_sr_check_canceled(msg_cq[1]);
+
+			if (d_err_cqe.err == FI_ECANCELED)
 				dcanceled = 1;
+			else if (d_err_cqe.err == FI_EADDRNOTAVAIL &&
+				!peer_src_known)
+				daddrnotavail = 1;
 		}
-	} while (!((source_done || scanceled) && (dest_done || dcanceled)));
+	} while (!((source_done || scanceled) && (dest_done || dcanceled || daddrnotavail)));
 
 	/* no further checking needed */
 	if (dgram_should_fail && (scanceled || dcanceled))
 		return;
 
-	rdm_sr_check_cqe(&s_cqe, target, (FI_MSG|FI_SEND), 0, 0, 0, false);
-	rdm_sr_check_cqe(&d_cqe, source, (FI_MSG|FI_RECV), target, len, 0, false);
+	if (daddrnotavail || dcanceled)
+		rdm_sr_check_err_cqe(&d_err_cqe, source, (FI_MSG|FI_RECV),
+				     target, len, 0, false);
+	else
+		rdm_sr_check_cqe(&d_cqe, source, (FI_MSG|FI_RECV), target, len, 0, false);
+
+	if (scanceled)
+		rdm_sr_check_err_cqe(&s_err_cqe, target, (FI_MSG|FI_SEND), 0,
+				     0, 0, false);
+	else
+		rdm_sr_check_cqe(&s_cqe, target, (FI_MSG|FI_SEND), 0, 0, 0, false);
 
 	s[0] = 1; r[1] = 1;
 	rdm_sr_check_cntrs(s, r, s_e, r_e);
@@ -652,6 +747,11 @@ Test(rdm_sr, send_retrans)
 }
 
 Test(dgram_sr, send)
+{
+	rdm_sr_xfer_for_each_size(do_send, 1, BUF_SZ);
+}
+
+Test(dgram_sr_src_unk, send)
 {
 	rdm_sr_xfer_for_each_size(do_send, 1, BUF_SZ);
 }
@@ -930,7 +1030,7 @@ void do_inject(int len)
 	s[0] = 1; r[1] = 1;
 	rdm_sr_check_cntrs(s, r, s_e, r_e);
 
-	/* make sure inject does not generate a send competion */
+	/* make sure inject does not generate a send completion */
 	cr_assert_eq(fi_cq_read(msg_cq[0], &cqe, 1), -FI_EAGAIN);
 
 	cr_assert(rdm_sr_check_data(source, target, len), "Data mismatch");

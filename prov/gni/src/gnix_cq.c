@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2015-2016 Cray Inc. All rights reserved.
- * Copyright (c) 2015-2016 Los Alamos National Security, LLC.
+ * Copyright (c) 2015-2017 Los Alamos National Security, LLC.
  *                         All rights reserved.
  *
  * This software is available to you under a choice of one of two
@@ -467,6 +467,7 @@ static void __cq_destruct(void *obj)
 
 	_gnix_queue_destroy(cq->events);
 	_gnix_queue_destroy(cq->errors);
+	free(cq->error_data);
 
 	fastlock_destroy(&cq->lock);
 	free(cq->cq_fid.ops);
@@ -670,14 +671,13 @@ DIRECT_FN int gnix_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 
 	cq_ops = calloc(1, sizeof(*cq_ops));
 	if (!cq_ops) {
-		ret = -FI_ENOMEM;
-		goto err;
+		return -FI_ENOMEM;
 	}
 
 	fi_cq_ops = calloc(1, sizeof(*fi_cq_ops));
 	if (!fi_cq_ops) {
 		ret = -FI_ENOMEM;
-		goto err1;
+		goto free_cq_ops;
 	}
 
 	*cq_ops = gnix_cq_ops;
@@ -685,18 +685,18 @@ DIRECT_FN int gnix_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 
 	ret = verify_cq_attr(attr, cq_ops, fi_cq_ops);
 	if (ret)
-		goto err2;
+		goto free_fi_cq_ops;
 
 	domain_priv = container_of(domain, struct gnix_fid_domain, domain_fid);
 	if (!domain_priv) {
 		ret = -FI_EINVAL;
-		goto err2;
+		goto free_fi_cq_ops;
 	}
 
 	cq_priv = calloc(1, sizeof(*cq_priv));
 	if (!cq_priv) {
 		ret = -FI_ENOMEM;
-		goto err2;
+		goto free_fi_cq_ops;
 	}
 
 	cq_priv->requires_lock = (domain_priv->thread_model !=
@@ -725,35 +725,41 @@ DIRECT_FN int gnix_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 	fastlock_init(&cq_priv->lock);
 	ret = gnix_cq_set_wait(cq_priv);
 	if (ret)
-		goto err3;
+		goto free_cq_priv;
 
 	ret = _gnix_queue_create(&cq_priv->events, alloc_cq_entry,
 				 free_cq_entry, cq_priv->entry_size,
 				 cq_priv->attr.size);
 	if (ret)
-		goto err3;
+		goto free_cq_priv;
 
 	ret = _gnix_queue_create(&cq_priv->errors, alloc_cq_entry,
 				 free_cq_entry, sizeof(struct fi_cq_err_entry),
 				 0);
 	if (ret)
-		goto err4;
+		goto free_gnix_queue;
+
+	cq_priv->error_data = calloc(1, sizeof(struct gnix_ep_name));
+	if (cq_priv->error_data == NULL) {
+		ret = -FI_ENOMEM;
+		goto free_gnix_queue;
+	}
 
 	*cq = &cq_priv->cq_fid;
 	return ret;
 
-err4:
+free_gnix_queue:
 	_gnix_queue_destroy(cq_priv->events);
-err3:
+free_cq_priv:
 	_gnix_ref_put(cq_priv->domain);
 	fastlock_destroy(&cq_priv->lock);
 	free(cq_priv);
-err2:
+free_fi_cq_ops:
 	free(fi_cq_ops);
-err1:
+free_cq_ops:
 	free(cq_ops);
-err:
-	return ret;
+
+        return ret;
 }
 
 
