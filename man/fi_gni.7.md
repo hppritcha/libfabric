@@ -258,6 +258,23 @@ GNIX_FAB_RQ_NAMO_FAX (Fetch AND and XOR) and GNIX_FAB_RQ_NAMO_FAX_S
 
 The GNI provider sets the domain attribute *cntr_cnt* to the the CQ limit divided by 2.
 
+Completion queue events may report unknown source address information when
+using *FI_SOURCE*. The source address information will be reported in the
+err_data member of the struct fi_cq_err_entry populated by fi_cq_readerr. The
+err_data member will report the source address information in the FI_ADDR_GNI
+address format. It's important to note that if another error event is generated
+on the given completion queue, then the existing error data field in the
+previous completion queue event will not be valid anymore. In order to prevent
+error data invalidation when using FI_AUTO_PROGRESS the application must
+ensure that only one client connects to the remote  peer at a time, the
+next client(s) must wait to connect until the remote peer has inserted the
+source address for the previous client into its address vector. When using
+FI_MANUAL_PROGRESS control progress the application can connect many clients
+at once but must serialize calls to: fi_cntr_readerr, fi_cq_read*, and
+fi_cq_sread*. For both auto and manual control progress, in order to populate
+the remote peer's address vector with this mechanism, the application must call
+fi_cq_readerr followed by fi_av_insert.
+
 # SEE ALSO
 
 [`fabric`(7)](fabric.7.html),
