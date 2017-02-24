@@ -708,7 +708,7 @@ static int __gnix_vc_connect_to_self(struct gnix_vc *vc)
 err_mbox_init:
 	_gnix_mbox_free(vc->smsg_mbox);
 	vc->smsg_mbox = NULL;
-	
+
 	return ret;
 }
 
@@ -896,22 +896,6 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 		goto err;
 	}
 
-	/* Report unknown source address to applications via recv CQ error
-	 * data for unconnected endpoints
-	 */
-	if (GNIX_EP_RDM_DGM(ep->type) && ep->recv_cq != NULL) {
-		error_data = ep->recv_cq->error_data;
-		memset(error_data, 0, sizeof(*error_data));
-
-		error_data->gnix_addr = src_addr;
-		error_data->name_type = name_type;
-
-		error_data->cm_nic_cdm_id = cm_nic->my_name.cm_nic_cdm_id;
-		error_data->cookie = cm_nic->my_name.cookie;
-
-		error_data->rx_ctx_cnt = rx_ctx_cnt;
-	}
-
 	/*
 	 * look to see if there is a VC already for the
 	 * address of the connecting EP.
@@ -972,6 +956,31 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 					  vc, src_addr);
 
 				dlist_insert_tail(&vc->list, &ep->unmapped_vcs);
+
+				/* Report unknown source address to applications
+				 * via recv CQ error data for unconnected
+				 * endpoints
+				 * TODO: can we store this src_addr in the req?
+				 */
+				if (GNIX_EP_RDM_DGM(ep->type) &&
+					ep->recv_cq != NULL) {
+					error_data = ep->recv_cq->error_data;
+					memset(error_data, 0,
+					       sizeof(*error_data));
+
+					error_data->gnix_addr = src_addr;
+					error_data->name_type = name_type;
+
+					error_data->cm_nic_cdm_id =
+						cm_nic->my_name.cm_nic_cdm_id;
+					error_data->cookie =
+						cm_nic->my_name.cookie;
+
+					error_data->rx_ctx_cnt = rx_ctx_cnt;
+				}
+				printf("Just added error data for conn req..."
+					       "(%p)\n",
+				       error_data);
 			}
 		} else {
 			vc->conn_state = GNIX_VC_CONNECTING;
@@ -982,6 +991,8 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 		 * initiate an request response
 		 */
 		work_req = calloc(1, sizeof(*work_req));
+		printf("Just created a work req for a conn req(%p)\n",
+		       work_req);
 		if (work_req == NULL) {
 			ret = -FI_ENOMEM;
 			goto err;

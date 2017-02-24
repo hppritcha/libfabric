@@ -334,6 +334,8 @@ static int __recv_completion(
 {
 	ssize_t rc;
 
+	GNIX_TRACE(FI_LOG_TRACE, "\n");
+
 	if ((req->msg.recv_flags & FI_COMPLETION) && ep->recv_cq) {
 		if (unlikely(ep->caps & FI_SOURCE &&
 				     src_addr == FI_ADDR_NOTAVAIL)) {
@@ -341,6 +343,12 @@ static int __recv_completion(
 						len, addr, data, tag, 0,
 						FI_EADDRNOTAVAIL, 0,
 						ep->recv_cq->error_data);
+			printf("Just added error data for recv completion..."
+				       "(%p)\n",
+			       ep->recv_cq->error_data);
+			/*TODO: pull the src_addr somewhere out of the req
+			 * rather than ep->recv_cq->error_data.
+			 * */
 		} else {
 			rc = _gnix_cq_add_event(ep->recv_cq, ep, context, flags,
 						len, addr, data, tag, src_addr);
@@ -1793,6 +1801,7 @@ static int __smsg_eager_msg_w_data(void *data, void *msg)
 			ep->min_multi_recv))
 			req->msg.recv_flags &= ~GNIX_MSG_MULTI_RECV_SUP;
 
+		printf("Generating completion for req(%p)\n", req);
 		__gnix_msg_recv_completion(ep, req);
 
 		/* Check if we're using FI_MULTI_RECV and there is space left

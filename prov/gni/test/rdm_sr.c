@@ -609,6 +609,11 @@ void rdm_sr_lazy_dereg_disable(void)
 static inline struct fi_cq_err_entry rdm_sr_check_canceled(struct fid_cq *cq)
 {
 	struct fi_cq_err_entry ee;
+	/* TODO: uncomment this..
+	 * struct gnix_ep_name err_ep_name;
+
+	ee.err_data_size = sizeof(struct gnix_ep_name);
+	ee.err_data = &err_ep_name;*/
 
 	fi_cq_readerr(cq, &ee, 0);
 
@@ -616,6 +621,7 @@ static inline struct fi_cq_err_entry rdm_sr_check_canceled(struct fid_cq *cq)
 	if ((hints->caps & FI_SOURCE) && ee.err == FI_EADDRNOTAVAIL) {
 		int ret = fi_av_insert(av[1], ep_name[0], 1, ee.err_data, 0,
 				       NULL);
+		printf("Just updated av with error data...(%p)\n", ee.err_data);
 		cr_assert(ret == 1);
 	}
 	return ee;
@@ -684,25 +690,20 @@ void do_send(int len)
 	/* need to progress both CQs simultaneously for rendezvous */
 	do {
 		ret = fi_cq_read(msg_cq[0], &s_cqe, 1);
-
 		if (ret == 1) {
 			source_done = 1;
 		}
 		if (ret == -FI_EAVAIL) {
 			s_err_cqe = rdm_sr_check_canceled(msg_cq[0]);
-
 			if (s_err_cqe.err == FI_ECANCELED)
 				scanceled = 1;
 		}
-
 		ret = fi_cq_read(msg_cq[1], &d_cqe, 1);
-
 		if (ret == 1) {
 			dest_done = 1;
 		}
 		if (ret == -FI_EAVAIL) {
 			d_err_cqe = rdm_sr_check_canceled(msg_cq[1]);
-
 			if (d_err_cqe.err == FI_ECANCELED)
 				dcanceled = 1;
 			else if (d_err_cqe.err == FI_EADDRNOTAVAIL &&
@@ -753,7 +754,7 @@ Test(dgram_sr, send)
 
 Test(dgram_sr_src_unk, send)
 {
-	rdm_sr_xfer_for_each_size(do_send, 1, BUF_SZ);
+	rdm_sr_xfer_for_each_size(do_send, 1, 1);
 }
 
 Test(dgram_sr, send_retrans)
