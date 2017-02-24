@@ -1794,6 +1794,7 @@ static int __smsg_eager_msg_w_data(void *data, void *msg)
 			   req, req->msg.recv_info[0].recv_addr,
 			   req->msg.cum_send_len);
 
+		printf("data_ptr = %p\n", data_ptr);
 		__gnix_msg_copy_data_to_recv_addr(req, data_ptr);
 
 		if ((req->msg.recv_flags & FI_MULTI_RECV) &&
@@ -1801,7 +1802,7 @@ static int __smsg_eager_msg_w_data(void *data, void *msg)
 			ep->min_multi_recv))
 			req->msg.recv_flags &= ~GNIX_MSG_MULTI_RECV_SUP;
 
-		printf("Generating completion for req(%p)\n", req);
+		printf("Generating completion for req(%p), vc(%p)\n", req, vc);
 		__gnix_msg_recv_completion(ep, req);
 
 		/* Check if we're using FI_MULTI_RECV and there is space left

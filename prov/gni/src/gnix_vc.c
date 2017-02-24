@@ -999,6 +999,7 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 		}
 
 		data = calloc(1, sizeof(struct wq_hndl_conn_req));
+		printf("just create a data buf = %p\n", data);
 		if (data == NULL) {
 			ret = -FI_ENOMEM;
 			goto err;
@@ -1007,6 +1008,7 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 		       &src_smsg_attr,
 		       sizeof(src_smsg_attr));
 		data->vc = vc;
+		printf("this vc is %p", vc);
 		data->src_vc_id = src_vc_id;
 		data->src_vc_ptr = src_vc_ptr;
 		data->irq_mem_hndl = tmp_mem_hndl;
