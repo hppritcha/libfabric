@@ -47,7 +47,6 @@
 
 /* forward declaration */
 struct gnix_fid_ep;
-struct gnix_ep_name;
 
 struct gnix_cq_entry {
 	void *the_entry;/*TODO: make the error_data var part of this?*/
@@ -69,7 +68,6 @@ struct gnix_fid_cq {
 	struct gnix_queue *events;
 	struct gnix_queue *errors;
 
-	struct gnix_ep_name *error_data; /*TODO: move to error CQ entry*/
 	struct fi_cq_attr attr;
 	size_t entry_size;
 
@@ -81,6 +79,7 @@ struct gnix_fid_cq {
 	struct dlist_entry poll_nics;
 	rwlock_t nic_lock;
 	bool requires_lock;
+	struct gnix_ep_name *error_data;
 };
 
 

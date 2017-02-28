@@ -596,6 +596,7 @@ DIRECT_FN STATIC ssize_t gnix_cq_readerr(struct fid_cq *cq,
 	struct gnix_fid_cq *cq_priv;
 	struct gnix_cq_entry *event;
 	struct slist_entry *entry;
+	struct fi_cq_err_entry *error;
 
 	ssize_t read_count = 0;
 
@@ -613,8 +614,20 @@ DIRECT_FN STATIC ssize_t gnix_cq_readerr(struct fid_cq *cq,
 	}
 
 	event = container_of(entry, struct gnix_cq_entry, item);
+	error = event->the_entry;
 
-	memcpy(buf, event->the_entry, sizeof(struct fi_cq_err_entry));
+	/*
+	 * to support possible FI_SOURCE request
+	 * eharvey: may want to do the free elsewhere
+	 */
+	if ((error->err == FI_ADDR_NOTAVAIL) &&
+		(error->err_data != NULL)) {
+		memcpy(cq_priv->error_data, error->err_data,
+			sizeof(struct gnix_ep_name));
+		free(error->err_data);
+		error->err_data = cq_priv->error_data;
+	}
+	memcpy(buf, error, sizeof(struct fi_cq_err_entry));
 
 	_gnix_queue_enqueue_free(cq_priv->errors, &event->item);
 

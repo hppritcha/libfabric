@@ -957,17 +957,21 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 
 				dlist_insert_tail(&vc->list, &ep->unmapped_vcs);
 
-				/* Report unknown source address to applications
-				 * via recv CQ error data for unconnected
-				 * endpoints
-				 * TODO: can we store this src_addr in the req?
-				 */
-				if (GNIX_EP_RDM_DGM(ep->type) &&
-					ep->recv_cq != NULL) {
-					error_data = ep->recv_cq->error_data;
-					memset(error_data, 0,
-					       sizeof(*error_data));
+				if (vc->ep->caps & FI_SOURCE) {
 
+					/* Report unknown source address to applications
+					 * via recv CQ error data for unconnected
+					 * endpoints
+					 * TODO: can we store this src_addr in the req?
+					 */
+					vc->gnix_ep_name = (struct gnix_ep_name *)malloc(sizeof(*error_data));
+					if (vc->gnix_ep_name == NULL) {
+						ret = -FI_ENOMEM;
+						goto err;
+					}
+
+					error_data = (struct gnix_ep_name *)vc->gnix_ep_name;
+					memset(error_data, 0, sizeof(*error_data));
 					error_data->gnix_addr = src_addr;
 					error_data->name_type = name_type;
 
@@ -977,10 +981,10 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 						cm_nic->my_name.cookie;
 
 					error_data->rx_ctx_cnt = rx_ctx_cnt;
+					printf("Just added error data for conn req..."
+						       "(%p)\n",
+					       error_data);
 				}
-				printf("Just added error data for conn req..."
-					       "(%p)\n",
-				       error_data);
 			}
 		} else {
 			vc->conn_state = GNIX_VC_CONNECTING;
@@ -1664,15 +1668,6 @@ int _gnix_vc_destroy(struct gnix_vc *vc)
 			      "_gnix_mbox_free returned %s\n",
 			      fi_strerror(-ret));
 		vc->smsg_mbox = NULL;
-	}
-
-	if (vc->dgram != NULL) {
-		ret = _gnix_dgram_free(vc->dgram);
-		if (ret != FI_SUCCESS)
-			GNIX_WARN(FI_LOG_EP_CTRL,
-			      "_gnix_dgram_free returned %s\n",
-			      fi_strerror(-ret));
-		vc->dgram = NULL;
 	}
 
 	ret = _gnix_nic_free_rem_id(nic, vc->vc_id);
