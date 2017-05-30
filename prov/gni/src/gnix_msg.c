@@ -256,12 +256,15 @@ fn_exit:
 static void __gnix_msg_copy_data_to_recv_addr(struct gnix_fab_req *req,
 					      void *data)
 {
+	size_t len;
+
 	GNIX_TRACE(FI_LOG_EP_DATA, "\n");
 
 	switch(req->type) {
 	case GNIX_FAB_RQ_RECV:
+		len = MIN(req->msg.cum_send_len, req->msg.cum_recv_len);
 		memcpy((void *)req->msg.recv_info[0].recv_addr, data,
-		       req->msg.cum_send_len);
+		       len);
 		break;
 
 	case GNIX_FAB_RQ_RECVV:
@@ -306,17 +309,32 @@ static void __gnix_msg_send_fr_complete(struct gnix_fab_req *req,
 	_gnix_vc_tx_schedule(vc);
 }
 
-static int __recv_err(struct gnix_fid_ep *ep, void *context, uint64_t flags,
-		      size_t len, void *addr, uint64_t data, uint64_t tag,
-		      size_t olen, int err, int prov_errno, void *err_data,
-		      size_t err_data_size)
+static int __gnix_msg_recv_comp_w_err(struct gnix_fid_ep *ep, struct gnix_fab_req *req,
+				      int error, gni_return_t status, char *prov_info,
+				      size_t prov_info_size)
 {
-	int rc;
+	uint64_t flags = FI_RECV | FI_MSG;
+	size_t olen = 0UL;
 
 	if (ep->recv_cq) {
-		rc = _gnix_cq_add_error(ep->recv_cq, context, flags, len,
-					addr, data, tag, olen, err,
-					prov_errno, err_data, err_data_size);
+
+		flags |= req->msg.send_flags & (FI_TAGGED | FI_REMOTE_CQ_DATA);
+		flags |= req->msg.recv_flags & (FI_PEEK | FI_CLAIM | FI_DISCARD |
+
+		if (req->msg.cum_send_len > req->msg.cum_recv_len)
+			olen = req->msg.cum_send_len - req->msg.cum_recv_len;
+
+		rc = _gnix_cq_add_error(ep->recv_cq,
+					req->context, flags,
+					req->msg.cum_recv_len,
+					(void *)req->msg.recv_info[0].recv_addr,
+					req->msg.imm,
+					req->msg.tag,
+					olen,
+				        error,
+					status,
+					prov_info,
+					prov_info_size);
 		if (rc != FI_SUCCESS)  {
 			GNIX_WARN(FI_LOG_EP_DATA,
 				  "_gnix_cq_add_error returned %d\n",
@@ -335,24 +353,11 @@ static int __recv_err(struct gnix_fid_ep *ep, void *context, uint64_t flags,
 	return FI_SUCCESS;
 }
 
-static int __gnix_msg_recv_err(struct gnix_fid_ep *ep, struct gnix_fab_req *req)
-{
-	uint64_t flags = FI_RECV | FI_MSG;
-
-	flags |= req->msg.send_flags & FI_TAGGED;
-
-	return __recv_err(ep, req->user_context, flags, req->msg.cum_recv_len,
-			  (void *)req->msg.recv_info[0].recv_addr, req->msg.imm,
-			  req->msg.tag, 0, FI_ECANCELED,
-			  GNI_RC_TRANSACTION_ERROR, NULL, 0);
-}
-
-static int __recv_completion(
-		struct gnix_fid_ep *ep,
-		struct gnix_fab_req *req,
-		uint64_t flags,
-		size_t len,
-		void *addr)
+static inline int __recv_completion(struct gnix_fid_ep *ep,
+				    struct gnix_fab_req *req,
+				    uint64_t flags,
+				    size_t len,
+				    void *addr)
 {
 	ssize_t rc;
 
@@ -384,13 +389,12 @@ static int __recv_completion(
 	return FI_SUCCESS;
 }
 
-static int __recv_completion_src(
-		struct gnix_fid_ep *ep,
-		struct gnix_fab_req *req,
-		uint64_t flags,
-		size_t len,
-		void *addr,
-		fi_addr_t src_addr)
+static inline int __recv_completion_src(struct gnix_fid_ep *ep,
+					struct gnix_fab_req *req,
+					uint64_t flags,
+					size_t len,
+					void *addr,
+					fi_addr_t src_addr)
 {
 	ssize_t rc;
 
@@ -474,25 +478,32 @@ static inline int __gnix_msg_recv_completion(struct gnix_fid_ep *ep,
 	flags |= req->msg.send_flags & (FI_TAGGED | FI_REMOTE_CQ_DATA);
 	flags |= req->msg.recv_flags & (FI_PEEK | FI_CLAIM | FI_DISCARD);
 
-	len = MIN(req->msg.cum_send_len, req->msg.cum_recv_len);
+	/*
+	 * TODO: need to report FI_ETRUNC here
+	 */
 
 	if (unlikely(req->msg.recv_flags & FI_MULTI_RECV))
 		recv_addr = (void *)req->msg.recv_info[0].recv_addr;
 
-	if (likely(!(ep->caps & FI_SOURCE))) {
-		ret = __recv_completion(ep,
-					 req,
-					 flags,
-					 len,
-					 recv_addr);
+	if (likely(req->msg.cum_recv_len  >= req->msg.cum_send_len)) {
+		if (likely(!(ep->caps & FI_SOURCE))) {
+			ret = __recv_completion(ep,
+						 req,
+						 flags,
+						 len,
+						 recv_addr);
+		} else {
+			src_addr = _gnix_vc_peer_fi_addr(req->vc);
+			ret = __recv_completion_src(ep,
+						     req,
+						     flags,
+						     len,
+						     recv_addr,
+						     src_addr);
+		}
 	} else {
-		src_addr = _gnix_vc_peer_fi_addr(req->vc);
-		ret = __recv_completion_src(ep,
-					     req,
-					     flags,
-					     len,
-					     recv_addr,
-					     src_addr);
+		ret = __gnix_msg_recv_comp_w_err(ep, req, FI_ETRUNC,
+						 GNI_RC_SUCCESS, NULL, 0UL);
 	}
 
 	/*
@@ -1813,19 +1824,19 @@ static int __comp_rndzv_start(void *data, gni_return_t tx_status)
 static int __comp_rndzv_fin(void *data, gni_return_t tx_status)
 {
 	int ret = FI_SUCCESS;
+	gni_return_t prov_error = GNI_RC_SUCCESS;
 	struct gnix_tx_descriptor *tdesc = (struct gnix_tx_descriptor *)data;
 	struct gnix_fab_req *req = tdesc->req;
 
-	if (tx_status != GNI_RC_SUCCESS || req->msg.status != GNI_RC_SUCCESS) {
-		/* TODO should this be fatal? A request will sit waiting at the
-		 * peer. */
-		GNIX_WARN(FI_LOG_EP_DATA, "Failed transaction: %p\n", req);
-		ret = __gnix_msg_recv_err(req->gnix_ep, req);
-		if (ret != FI_SUCCESS)
-			GNIX_WARN(FI_LOG_EP_DATA,
-					"__gnix_msg_recv_err() failed: %d\n",
-					ret);
-	} else {
+	if (unlikely(tx_status != GNI_RC_SUCCESS
+			|| req->msg.status != GNI_RC_SUCCESS)) {
+		if (tx_status != GNI_RC_SUCCESS)
+			prov_error = tx_status;
+		if (prov_error == GNI_RC_SUCCESS)
+			prov_error = req->msg.status;
+	}
+
+	if (prov_error == GNI_RC_SUCCESS) {
 		GNIX_INFO(FI_LOG_EP_DATA, "Completed RNDZV_FIN, req: %p\n",
 			  req);
 
@@ -1834,6 +1845,19 @@ static int __comp_rndzv_fin(void *data, gni_return_t tx_status)
 			GNIX_WARN(FI_LOG_EP_DATA,
 				  "__gnix_msg_recv_completion() failed: %d\n",
 				  ret);
+	} else {
+
+		GNIX_WARN(FI_LOG_EP_DATA, "Failed transaction: %p\n", req);
+		ret = __gnix_msg_recv_comp_w_err(req->gnix_ep,
+						 req,
+						 FI_SUCCESS,
+						 prov_err,
+						 NULL,
+						 0UL);
+		if (ret != FI_SUCCESS)
+			GNIX_WARN(FI_LOG_EP_DATA,
+					"__gnix_msg_recv_err() failed: %d\n",
+					ret);
 	}
 
 	_gnix_nic_tx_free(req->gnix_ep->nic, tdesc);
@@ -2149,7 +2173,7 @@ static int __smsg_rndzv_start(void *data, void *msg)
 		req->msg.send_info[0].send_len =
 			MIN(hdr->len, req->msg.cum_recv_len);
 		req->msg.send_info[0].mem_hndl = hdr->mdh;
-		req->msg.cum_send_len = req->msg.send_info[0].send_len;
+		req->msg.cum_send_len = hdr->len;
 		req->msg.send_iov_cnt = 1;
 		req->msg.send_flags = hdr->flags;
 		req->msg.tag = hdr->msg_tag;
@@ -2676,9 +2700,12 @@ ssize_t _gnix_recv(struct gnix_fid_ep *ep, uint64_t buf, size_t len,
 			}
 
 			/* Send length is truncated to receive buffer size. */
+			/* TODO: this isn't correct */
+#if 0
 			req->msg.cum_send_len =
 				MIN(req->msg.cum_send_len,
 				    req->msg.recv_info[0].recv_len);
+#endif
 
 			/* Initiate pull of source data. */
 			req->work_fn = req->msg.send_iov_cnt == 1 ?
@@ -2693,12 +2720,12 @@ ssize_t _gnix_recv(struct gnix_fid_ep *ep, uint64_t buf, size_t len,
 			GNIX_DEBUG(FI_LOG_EP_DATA, "Matched recv, req: %p\n",
 				  req);
 
+			req->msg.cum_send_len = req->msg.send_info[0].send_len;
+
 			/* Send length is truncated to receive buffer size. */
 			req->msg.send_info[0].send_len =
 				MIN(req->msg.send_info[0].send_len,
 				    req->msg.recv_info[0].recv_len);
-
-			req->msg.cum_send_len = req->msg.send_info[0].send_len;
 
 			/* Copy data from unexpected eager receive buffer. */
 			memcpy((void *)buf, (void *)req->msg.send_info[0].send_addr,
@@ -2723,10 +2750,8 @@ ssize_t _gnix_recv(struct gnix_fid_ep *ep, uint64_t buf, size_t len,
 		 * were looking for, return FI_ENOMSG
 		 */
 		if (match_flags) {
-			__recv_err(ep, context, flags, len,
-				   (void *)buf, 0, tag, len, FI_ENOMSG,
-				   FI_ENOMSG, NULL, 0);
-
+			ret = __gnix_msg_recv_comp_w_err(ep, req, FI_ENOMSG, GNI_RC_SUCCESS,
+							 NULL, 0);
 			/* if handling trecvmsg flags, return here
 			 * Never post a receive request from this type of context
 			 */
@@ -3391,14 +3416,13 @@ ssize_t _gnix_recvv(struct gnix_fid_ep *ep, const struct iovec *iov,
 		 * were looking for, return FI_ENOMSG
 		 */
 		if (match_flags) {
-			__recv_err(ep, context, flags, cum_len,
-				   (void *) iov, 0, tag, cum_len, FI_ENOMSG,
-				   FI_ENOMSG, NULL, 0);
-
-			/* if handling trecvmsg flags, return here
+			/*
+			 *if handling trecvmsg flags, return here
 			 * Never post a receive request from this type of
 			 * context
 			 */
+			ret = __gnix_msg_recv_comp_w_err(ep, req, FI_ENOMSG, GNI_RC_SUCCESS,
+							 NULL, 0);
 			ret = FI_SUCCESS;
 			goto pdc_exit;
 		}
