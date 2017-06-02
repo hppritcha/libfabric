@@ -260,9 +260,9 @@ static void __gnix_msg_copy_data_to_recv_addr(struct gnix_fab_req *req,
 
 	GNIX_TRACE(FI_LOG_EP_DATA, "\n");
 
+	len = MIN(req->msg.cum_send_len, req->msg.cum_recv_len);
 	switch(req->type) {
 	case GNIX_FAB_RQ_RECV:
-		len = MIN(req->msg.cum_send_len, req->msg.cum_recv_len);
 		memcpy((void *)req->msg.recv_info[0].recv_addr, data,
 		       len);
 		break;
@@ -272,7 +272,7 @@ static void __gnix_msg_copy_data_to_recv_addr(struct gnix_fab_req *req,
 		__gnix_msg_unpack_data_into_iov(req->msg.recv_info,
 						req->msg.recv_iov_cnt,
 						(uint64_t) data,
-						req->msg.cum_send_len);
+						len);
 		break;
 
 	default:
@@ -319,7 +319,8 @@ static int __gnix_msg_recv_comp_w_err(struct gnix_fid_ep *ep, struct gnix_fab_re
 	if (ep->recv_cq) {
 
 		flags |= req->msg.send_flags & (FI_TAGGED | FI_REMOTE_CQ_DATA);
-		flags |= req->msg.recv_flags & (FI_PEEK | FI_CLAIM | FI_DISCARD |
+		flags |= req->msg.recv_flags & (FI_PEEK | FI_CLAIM |
+						FI_DISCARD);
 
 		if (req->msg.cum_send_len > req->msg.cum_recv_len)
 			olen = req->msg.cum_send_len - req->msg.cum_recv_len;
@@ -3238,7 +3239,7 @@ ssize_t _gnix_recvv(struct gnix_fid_ep *ep, const struct iovec *iov,
 		    uint64_t flags, uint64_t ignore, uint64_t tag)
 {
 	int i, ret = FI_SUCCESS;
-	size_t cum_len = 0;
+	size_t cum_len = 0, len;
 	struct gnix_fab_req *req = NULL;
 	struct gnix_address gnix_addr;
 	struct gnix_tag_storage *posted_queue = NULL;
@@ -3323,7 +3324,6 @@ ssize_t _gnix_recvv(struct gnix_fid_ep *ep, const struct iovec *iov,
 		req->msg.recv_flags = flags;
 		req->msg.recv_iov_cnt = count;
 		req->msg.cum_recv_len = cum_len;
-		/* req->msg.cum_send_len = MIN(req->msg.cum_send_len, cum_len); */
 
 		if (tagged) {
 			req->type = GNIX_FAB_RQ_TRECVV;
@@ -3403,10 +3403,12 @@ ssize_t _gnix_recvv(struct gnix_fid_ep *ep, const struct iovec *iov,
 			 * the rndzv threshold on the sender was not reached or
 			 * exceeded.
 			 */
+
+			len = MIN(cum_len, req->msg.send_info[0].send_len);
 			__gnix_msg_unpack_data_into_iov(req->msg.recv_info,
 							count,
 							req->msg.send_info[0].send_addr,
-							req->msg.send_info[0].send_len);
+							len);
 
 			__gnix_msg_recv_completion(ep, req);
 			_gnix_fr_free(ep, req);
