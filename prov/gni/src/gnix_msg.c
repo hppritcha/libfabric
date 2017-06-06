@@ -313,6 +313,7 @@ static int __gnix_msg_recv_comp_w_err(struct gnix_fid_ep *ep, struct gnix_fab_re
 				      int error, gni_return_t status, char *prov_info,
 				      size_t prov_info_size)
 {
+	int ret;
 	uint64_t flags = FI_RECV | FI_MSG;
 	size_t olen = 0UL;
 
@@ -325,8 +326,8 @@ static int __gnix_msg_recv_comp_w_err(struct gnix_fid_ep *ep, struct gnix_fab_re
 		if (req->msg.cum_send_len > req->msg.cum_recv_len)
 			olen = req->msg.cum_send_len - req->msg.cum_recv_len;
 
-		rc = _gnix_cq_add_error(ep->recv_cq,
-					req->context, flags,
+		ret = _gnix_cq_add_error(ep->recv_cq,
+					req->user_context, flags,
 					req->msg.cum_recv_len,
 					(void *)req->msg.recv_info[0].recv_addr,
 					req->msg.imm,
@@ -336,19 +337,19 @@ static int __gnix_msg_recv_comp_w_err(struct gnix_fid_ep *ep, struct gnix_fab_re
 					status,
 					prov_info,
 					prov_info_size);
-		if (rc != FI_SUCCESS)  {
+		if (ret != FI_SUCCESS)  {
 			GNIX_WARN(FI_LOG_EP_DATA,
 				  "_gnix_cq_add_error returned %d\n",
-				  rc);
+				  ret);
 		}
 	}
 
 	if (ep->recv_cntr) {
-		rc = _gnix_cntr_inc_err(ep->recv_cntr);
-		if (rc != FI_SUCCESS)
+		ret = _gnix_cntr_inc_err(ep->recv_cntr);
+		if (ret != FI_SUCCESS)
 			GNIX_WARN(FI_LOG_EP_DATA,
 				  "_gnix_cntr_inc_err() failed: %d\n",
-				  rc);
+				  ret);
 	}
 
 	return FI_SUCCESS;
@@ -479,9 +480,7 @@ static inline int __gnix_msg_recv_completion(struct gnix_fid_ep *ep,
 	flags |= req->msg.send_flags & (FI_TAGGED | FI_REMOTE_CQ_DATA);
 	flags |= req->msg.recv_flags & (FI_PEEK | FI_CLAIM | FI_DISCARD);
 
-	/*
-	 * TODO: need to report FI_ETRUNC here
-	 */
+	len = MIN(req->msg.cum_recv_len, req->msg.cum_send_len);
 
 	if (unlikely(req->msg.recv_flags & FI_MULTI_RECV))
 		recv_addr = (void *)req->msg.recv_info[0].recv_addr;
@@ -503,6 +502,10 @@ static inline int __gnix_msg_recv_completion(struct gnix_fid_ep *ep,
 						     src_addr);
 		}
 	} else {
+#if 0
+		fprintf(stderr, "hey, posting a ETRUNC error recv len %ld send len %ld\n",
+				req->msg.cum_recv_len, req->msg.cum_send_len);
+#endif
 		ret = __gnix_msg_recv_comp_w_err(ep, req, FI_ETRUNC,
 						 GNI_RC_SUCCESS, NULL, 0UL);
 	}
@@ -1851,8 +1854,8 @@ static int __comp_rndzv_fin(void *data, gni_return_t tx_status)
 		GNIX_WARN(FI_LOG_EP_DATA, "Failed transaction: %p\n", req);
 		ret = __gnix_msg_recv_comp_w_err(req->gnix_ep,
 						 req,
-						 FI_SUCCESS,
-						 prov_err,
+						 FI_ECANCELED,
+						 prov_error,
 						 NULL,
 						 0UL);
 		if (ret != FI_SUCCESS)
@@ -2650,6 +2653,9 @@ ssize_t _gnix_recv(struct gnix_fid_ep *ep, uint64_t buf, size_t len,
 		req->user_context = context;
 		req->msg.recv_info[0].recv_addr = (uint64_t)buf;
 		req->msg.recv_info[0].recv_len = len;
+#if 0
+		fprintf(stderr, "setting cum_recv_len to %ld %d\n", len, __LINE__);
+#endif
 		req->msg.cum_recv_len = len;
 
 		if (mdesc) {
@@ -2776,6 +2782,9 @@ ssize_t _gnix_recv(struct gnix_fid_ep *ep, uint64_t buf, size_t len,
 
 		req->msg.recv_info[0].recv_addr = (uint64_t)buf;
 		req->msg.recv_info[0].recv_len = len;
+#if 0
+		fprintf(stderr, "setting cum_recv_len to %ld %d\n", len, __LINE__);
+#endif
 		req->msg.cum_recv_len = len;
 
 		if (mdesc) {

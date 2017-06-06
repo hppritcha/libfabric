@@ -1910,6 +1910,8 @@ void do_sendrecv_buf(void *p, void *t, int send_len, int recv_len)
 	uint64_t s[NUMEPS] = {0}, r[NUMEPS] = {0}, s_e[NUMEPS] = {0};
 	uint64_t r_e[NUMEPS] = {0};
 
+	if (send_len > recv_len) return;
+
 	rdm_sr_init_data(p, send_len, 0xab);
 	rdm_sr_init_data(t, recv_len, 0);
 
@@ -1947,6 +1949,7 @@ void do_sendrecv_alignment(int len)
 {
 	int s_off, t_off, sl_off, rl_off;
 
+	fprintf(stderr, "working on transfer len %d\n", len);
 	for (s_off = 0; s_off < 8; s_off++) {
 		for (t_off = 0; t_off < 8; t_off++) {
 			for (sl_off = -7; sl_off < 8; sl_off++) {
