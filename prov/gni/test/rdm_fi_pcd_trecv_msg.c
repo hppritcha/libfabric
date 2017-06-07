@@ -695,7 +695,7 @@ Test(rdm_fi_pdc, peek_no_event)
 	cr_assert_eq(cqe_error.buf, msg.msg_iov[0].iov_base);
 	cr_assert_eq(cqe_error.len, msg.msg_iov[0].iov_len);
 	cr_assert_eq(cqe_error.err, FI_ENOMSG);
-	cr_assert_eq(cqe_error.olen, msg.msg_iov[0].iov_len);
+	cr_assert_eq(cqe_error.olen, 0); /* no message was received so olen should be 0 */
 	cr_assert_eq(cqe_error.op_context, msg.context);
 	cr_assert_eq(cqe_error.prov_errno, FI_ENOMSG);
 	cr_assert_eq(cqe_error.tag, msg.tag);
@@ -1831,6 +1831,7 @@ static void pdc_peek_event_present_small_buffer_provided(int len)
 						R_STATE_PEEK,
 						R_STATE_PEEK_WAIT_CQ);
 			} else {
+				fprintf(stderr, "fi_cq_read returned %s\n", fi_strerror(-ret));
 				COND_RECV_STATE_TRANSITION(ret, 1,
 						R_STATE_RECV_MSG_1,
 						R_STATE_PEEK_WAIT_CQ);

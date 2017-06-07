@@ -502,10 +502,6 @@ static inline int __gnix_msg_recv_completion(struct gnix_fid_ep *ep,
 						     src_addr);
 		}
 	} else {
-#if 0
-		fprintf(stderr, "hey, posting a ETRUNC error recv len %ld send len %ld\n",
-				req->msg.cum_recv_len, req->msg.cum_send_len);
-#endif
 		ret = __gnix_msg_recv_comp_w_err(ep, req, FI_ETRUNC,
 						 GNI_RC_SUCCESS, NULL, 0UL);
 	}
@@ -2753,23 +2749,30 @@ ssize_t _gnix_recv(struct gnix_fid_ep *ep, uint64_t buf, size_t len,
 		if (mrecv_req)
 			goto mrecv_exit;
 
-		/* if peek/claim/discard, we didn't find what we
-		 * were looking for, return FI_ENOMSG
-		 */
-		if (match_flags) {
-			ret = __gnix_msg_recv_comp_w_err(ep, req, FI_ENOMSG, GNI_RC_SUCCESS,
-							 NULL, 0);
-			/* if handling trecvmsg flags, return here
-			 * Never post a receive request from this type of context
-			 */
-			ret = FI_SUCCESS;
-			goto pdc_exit;
-		}
-
 		req = _gnix_fr_alloc(ep);
 		if (req == NULL) {
 			ret = -FI_EAGAIN;
 			goto err;
+		}
+
+		/* if peek/claim/discard, we didn't find what we
+		 * were looking for, return FI_ENOMSG
+		 */
+		if (match_flags) {
+			req->user_context = context;
+			req->msg.recv_flags = flags;
+			req->msg.cum_recv_len = len;
+			req->msg.cum_send_len = 0;
+			req->msg.recv_info[0].recv_addr = (uint64_t)buf;
+			req->msg.tag = tag;
+			ret = __gnix_msg_recv_comp_w_err(ep, req, FI_ENOMSG, FI_ENOMSG,
+							 NULL, 0);
+			/* if handling trecvmsg flags, return here
+			 * Never post a receive request from this type of context
+			 */
+			_gnix_fr_free(ep, req);
+			ret = FI_SUCCESS;
+			goto pdc_exit;
 		}
 
 		GNIX_DEBUG(FI_LOG_EP_DATA, "New recv, req: %p\n", req);
@@ -3423,30 +3426,40 @@ ssize_t _gnix_recvv(struct gnix_fid_ep *ep, const struct iovec *iov,
 			_gnix_fr_free(ep, req);
 		}
 	} else {
+
+		req = _gnix_fr_alloc(ep);
+		if (req == NULL) {
+			ret = -FI_ENOMEM;
+			goto err;
+		}
+
 		/* if peek/claim/discard, we didn't find what we
 		 * were looking for, return FI_ENOMSG
 		 */
+
 		if (match_flags) {
 			/*
 			 *if handling trecvmsg flags, return here
 			 * Never post a receive request from this type of
 			 * context
 			 */
-			ret = __gnix_msg_recv_comp_w_err(ep, req, FI_ENOMSG, GNI_RC_SUCCESS,
+			req->user_context = context;
+			req->msg.recv_flags = flags;
+			req->msg.cum_recv_len = cum_len;
+			req->msg.cum_send_len = 0;
+			req->msg.recv_info[0].recv_addr = (uint64_t)iov[0].iov_base;
+			req->msg.tag = tag;
+			ret = __gnix_msg_recv_comp_w_err(ep, req, FI_ENOMSG, FI_ENOMSG,
 							 NULL, 0);
+			_gnix_fr_free(ep, req);
 			ret = FI_SUCCESS;
 			goto pdc_exit;
 		}
 
 		/*
-		 * No matching requests found, create a new one and enqueue
+		 * No matching requests found,  enqueue
 		 * it in the posted queue.
 		 */
-		req = _gnix_fr_alloc(ep);
-		if (req == NULL) {
-			ret = -FI_EAGAIN;
-			goto err;
-		}
 
 		GNIX_DEBUG(FI_LOG_EP_DATA, "EXPECTED, req = %p\n", req);
 
