@@ -1102,9 +1102,11 @@ static int __gnix_rndzv_req(void *arg)
 		if (req->int_tx_buf_e == NULL) {
 			req->int_tx_buf_e = _gnix_ep_get_int_tx_buf(ep);
 			if (req->int_tx_buf_e == NULL) {
-				GNIX_FATAL(FI_LOG_EP_DATA,
+				GNIX_WARN(FI_LOG_EP_DATA,
 					  "RAN OUT OF INT_TX_BUFS");
-				/* TODO return error */
+				_gnix_nic_tx_free(nic, tail_txd);
+				_gnix_nic_tx_free(nic, txd);
+				return -FI_ENOSPC;
 			}
 		}
 
