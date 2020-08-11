@@ -2,6 +2,8 @@
  * Copyright (c) 2015-2017 Cray Inc. All rights reserved.
  * Copyright (c) 2015-2018 Los Alamos National Security, LLC.
  *               All rights reserved.
+ * Copyrigth (c) 2020  Triad National Security, LLC. All rights
+ *                     reserved.
  *
  *
  * This software is available to you under a choice of one of two
@@ -265,12 +267,12 @@ int _gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
 	}
 
 	/* if this is a provider registration using VMDH and 0 was provided
-	 * as the key, pick any available */
+	 * as the key, let the kGNI pick a region in one of the VMDH's
+         * This has the added and important bonus that kgni will take
+         * advantage of GNI_CDM_MODE_MDD_SHARED.
+         */
 	if (auth_key->using_vmdh && reserved && !requested_key) {
-		requested_key = _gnix_get_next_reserved_key(auth_key);
-		if (requested_key <= 0)
-			return -FI_ENOKEY;
-		fi_reg_context.requested_key = requested_key;
+		fi_reg_context.requested_key = -1;
 	}
 
 	info = &domain->mr_cache_info[auth_key->ptag];
@@ -625,12 +627,18 @@ static inline void *__gnix_generic_register(
 	COND_ACQUIRE(nic->requires_lock, &nic->lock);
 	if (nic->using_vmdh && !nic->mdd_resources_set) {
 		info = auth_key;
-		assert(info);
-
+                if (OFI_UNLIKELY(info == NULL)) {
+                        GNIX_WARN(FI_LOG_MR, "auth key should not be null\n");
+                        return NULL;
+                }
 		grc = GNI_SetMddResources(nic->gni_nic_hndl,
 				(info->attr.prov_key_limit +
 				 info->attr.user_key_limit));
-		assert(grc == GNI_RC_SUCCESS);
+                if (OFI_UNLIKELY(grc != GNI_RC_SUCCESS)) {
+                        GNIX_WARN(FI_LOG_MR, "GNI_SetMDDResources returned %s\n",
+			          gni_err_str[grc]);
+                        return NULL;
+                }
 
 		nic->mdd_resources_set = 1;
 	}
