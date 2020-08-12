@@ -338,6 +338,7 @@ int _gnix_auth_key_enable(struct gnix_auth_key *info)
 			if (ret)
 				GNIX_FATAL(FI_LOG_DOMAIN,
 					"failed to get logical node rank, rc=%d\n", ret);
+                        fprintf(stderr, "I think pes on node is %d and my local rank is %d\n", pes_on_node, logical_rank);
 
 			info->key_partition_size = info->attr.user_key_limit / pes_on_node;
 			info->key_offset = logical_rank * info->key_partition_size;

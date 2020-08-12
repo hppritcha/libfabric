@@ -268,7 +268,7 @@ static int __nic_setup_irq_cq(struct gnix_nic *nic)
 				len,
 				nic->rx_cq_blk,
 				flags,
-				vmdh_index,
+				-1,
 				 &nic->irq_mem_hndl);
 	if (status != GNI_RC_SUCCESS) {
 		ret = gnixu_to_fi_errno(status);

@@ -366,7 +366,9 @@ static int __gnix_alps_init(void)
 	}
 
 	gnix_pes_on_node = gnix_appLayout.numPesHere;
+        fprintf(stderr, "gnix_pes_on_node = %d\n", gnix_pes_on_node);
 	gnix_first_pe_on_node = gnix_appLayout.firstPe;
+        fprintf(stderr, "gnix_first_pe_on_node = %d\n", gnix_first_pe_on_node);
 
 	if ((cptr = getenv("PMI_FORK_RANK")) != NULL) {
 		my_pe = atoi(cptr);
@@ -407,8 +409,10 @@ static int __gnix_app_init(void)
 
 	/* Try CCM first */
 	ret = __gnix_ccm_init();
+        fprintf(stderr, "_gnix_ccm_init returned %d\n", ret);
 	if (ret) {
 		ret = __gnix_alps_init();
+                fprintf(stderr, "_gnix_alps_init returned %d\n", ret);
 	}
 
 	if (ret == FI_SUCCESS) {

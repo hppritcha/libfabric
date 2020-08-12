@@ -388,7 +388,7 @@ static int __create_slab(struct gnix_mbox_alloc_handle *handle)
 	status = GNI_MemRegister(handle->nic_handle->gni_nic_hndl,
 				 (uint64_t) slab->base, total_size,
 				 handle->cq_handle,
-				 flags, vmdh_index,
+				 flags, -1,
 				 &slab->memory_handle);
 	COND_RELEASE(handle->nic_handle->requires_lock, &handle->nic_handle->lock);
 	if (status != GNI_RC_SUCCESS) {

@@ -272,6 +272,7 @@ int _gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
          * advantage of GNI_CDM_MODE_MDD_SHARED.
          */
 	if (auth_key->using_vmdh && reserved && !requested_key) {
+                fprintf(stderr, "I think resered = %d and requested_key = %d\n", reserved, requested_key);
 		fi_reg_context.requested_key = -1;
 	}
 

@@ -253,14 +253,17 @@ static inline void cntr_setup_mr(void)
 	for (i = 0; i < NUM_EPS; i++) {
 		source_key = USING_SCALABLE(fi) ? (i * 2) + 1 : 0;
 		target_key = USING_SCALABLE(fi) ? (i * 2) + 2 : 0;
+                fprintf(stderr, "i = %d source_key = %d target_key = %d\n", i, source_key, target_key);
 
 		ret = fi_mr_reg(dom[i], target, BUF_SZ,
 				FI_REMOTE_READ | FI_REMOTE_WRITE,
 				0, target_key, 0, &rem_mr[i], &target);
+                fprintf(stderr, "ret = %d\n", ret, __LINE__);
 		cr_assert_eq(ret, 0);
 
 		ret = fi_mr_reg(dom[i], source, BUF_SZ,	FI_READ | FI_WRITE,
 				0, source_key, 0, &loc_mr[i], &source);
+                fprintf(stderr, "ret = %d %d\n", ret,__LINE__);
 		cr_assert_eq(ret, 0);
 
 		if (USING_SCALABLE(fi)) {
